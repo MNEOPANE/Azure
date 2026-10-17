@@ -1,0 +1,159 @@
+# Azure Subscription
+SUBSCRIPTION_ID = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# Configuration
+RESOURCE_GROUP = "CryWolfPortal"
+LOCATION = "WestUS2"
+VM_NAME = "Azure-CryWolf"
+VNET_NAME = "FortinetCryWolf-vnet"
+SUBNET_NAME = "ExternalSubnet"
+NIC_NAME = "FortinetCryWolf-fgt-nic1"
+PIP_NAME = "Alarmsdev-FGT-Public-IP"
+credential = DefaultAzureCredential()
+# Clients
+resource_client = ResourceManagementClient(
+    credential, SUBSCRIPTION_ID
+)
+network_client = NetworkManagementClient(
+    credential, SUBSCRIPTION_ID
+)
+compute_client = ComputeManagementClient(
+    credential, SUBSCRIPTION_ID
+)
+# Create Resource Group
+resource_client.resource_groups.create_or_update(
+    RESOURCE_GROUP,
+    {"location": LOCATION}
+)
+print("Resource Group created")
+# Create Virtual Network
+network_client.virtual_networks.begin_create_or_update(
+    RESOURCE_GROUP,
+    VNET_NAME,
+    {
+        "location": LOCATION,
+        "address_space": {
+            "address_prefixes": ["172.18.0.0/21"]
+        }
+    }
+).result()
+# Create Subnet
+subnet = network_client.subnets.begin_create_or_update(
+    RESOURCE_GROUP,
+    VNET_NAME,
+    SUBNET_NAME,
+    {"address_prefix": "172.18.2.0/24"}
+).result()
+print("VNet and Subnet created")
+# Create Public IP
+pip = network_client.public_ip_addresses.begin_create_or_update(
+    RESOURCE_GROUP,
+    PIP_NAME,
+    {
+        "location": LOCATION,
+        "sku": {"name": "Standard"},
+        "public_ip_allocation_method": "Static"
+    }
+).result()
+print("Public IP created")
+# Create NIC
+nic = network_client.network_interfaces.begin_create_or_update(
+    RESOURCE_GROUP,
+    NIC_NAME,
+    {
+        "location": LOCATION,
+        "ip_configurations": [{
+            "name": "ipconfig1",
+            "subnet": {"id": subnet.id},
+            "public_ip_address": {"id": pip.id}
+        }]
+    }
+).result()
+print("NIC created")
+# FortiGate Marketplace Image
+VM_PARAMETERS = {
+    "location": LOCATION,
+    "hardware_profile": {
+        "vm_size": "Standard_D2s_v3"
+    },
+    "storage_profile": {
+        "image_reference": {
+            "publisher": "fortinet",
+            "offer": "fortinet_fortigate-vm_v5",
+            "sku": "fortinet_fg-vm",
+            "version": "latest"
+        }
+    },
+    "os_profile": {
+        "computer_name": VM_NAME,
+        "admin_username": "xxxxxxxxxx",
+        "admin_password": "xxxxxxxxxxxxxxx"
+    },
+    "network_profile": {
+        "network_interfaces": [{
+            "id": nic.id,
+            "primary": True
+        }]
+    }
+}
+# Create VM
+vm_creation = compute_client.virtual_machines.begin_create_or_update(
+    RESOURCE_GROUP,
+    VM_NAME,
+    VM_PARAMETERS
+)
+LAN_SUBNET_NAME = "lan-subnet"
+lan_subnet = network_client.subnets.begin_create_or_update(
+    RESOURCE_GROUP,
+    VNET_NAME,
+    LAN_SUBNET_NAME,
+    {
+        "address_prefix": "172.18.3.0/24"
+    }
+).result()
+LAN_NIC_NAME = "fortigate-lan-nic"
+lan_nic = network_client.network_interfaces.begin_create_or_update(
+    RESOURCE_GROUP,
+    LAN_NIC_NAME,
+    {
+        "location": LOCATION,
+        "enable_ip_forwarding": True,
+        "ip_configurations": [
+            {
+                "name": "lan-ipconfig",
+                "subnet": {
+                    "id": lan_subnet.id
+                },
+                "private_ip_allocation_method": "Dynamic"
+            }
+        ]
+    }
+).result()
+print("LAN NIC created")
+wan_nic = network_client.network_interfaces.begin_create_or_update(
+    RESOURCE_GROUP,
+    NIC_NAME,
+    {
+        "location": LOCATION,
+        "enable_ip_forwarding": True,
+        "ip_configurations": [
+            {
+                "name": "wan-ipconfig",
+                "subnet": {"id": subnet.id},
+                "public_ip_address": {"id": pip.id}
+            }
+        ]
+    }
+).result()
+vm_creation.result()
+"network_profile": {
+    "network_interfaces": [
+        {
+            "id": wan_nic.id,
+            "primary": True
+        },
+        {
+            "id": lan_nic.id,
+            "primary": False
+        }
+    ]
+}
